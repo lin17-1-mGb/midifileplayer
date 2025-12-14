@@ -6,7 +6,11 @@
 **st7789_splash.py** loads a splash screen as a systemd service  
 
 **show_safe_unplug_bkp.py** shutsdown as a systemd service  
-Note you need to know how to create and enabale systemd services
+
+Note you need to know how to create and enable systemd services  
+
+Video showing new features - https://www.youtube.com/shorts/SZ9eBFSrU1o
+
 
 
 # midifileplayer
