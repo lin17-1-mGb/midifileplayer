@@ -1,4 +1,4 @@
-#Additions to original
+# Additions to original
 3 files added :
 fast_boot_monkey_midi.py replace midiplaye; it has functions to show channel number and preset name of currently loaded soundfont; amidi connected message has been added; a shutdown mebu option has been added
 st7789_splash.py loads a splash screen as a systemd service
