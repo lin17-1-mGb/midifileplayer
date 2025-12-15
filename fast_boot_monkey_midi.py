@@ -15,11 +15,11 @@ midi_file_folder = os.path.join(directory, "midifiles")
 
 # ---------------------- UI STATE ----------------------
 MESSAGE = ""
-pathes = ["MIDI KEYBOARD", "SOUND FONT", "MIDI FILE", "SHUTDOWN"]  # Added shutdown
+pathes = ["MIDI KEYBOARD", "SOUND FONT", "MIDI FILE", "SHUTDOWN"]
 files = pathes.copy()
 selectedindex = 0
 operation_mode = "main screen"
-shutting_down = False  # Global flag for shutdown
+shutting_down = False
 
 # ---------------------- HARDWARE GLOBALS ----------------------
 rtmidi = fluidsynth = st7789 = None
@@ -42,6 +42,13 @@ channel_presets = {}
 current_midi_channel = None
 current_program_change = None
 state_lock = threading.Lock()
+
+# Overlay states
+drum_overlay_shown = False
+drum_overlay_start_time = 0.0
+
+keyboard_overlay_channel = None
+keyboard_overlay_start_time = 0.0
 
 # ---------------------- CACHED FILE LISTS ----------------------
 soundfont_paths, soundfont_names = [], []
@@ -98,7 +105,6 @@ def init_display():
         )
     except:
         font = ImageFont.load_default()
-
 
 # ---------------------- AUDIO ----------------------
 def init_fluidsynth_lazy():
@@ -210,14 +216,29 @@ def midi_callback(message_data, timestamp):
     n2 = message[2] if len(message) > 2 else 0
 
     global current_midi_channel, current_program_change
+    global drum_overlay_shown, drum_overlay_start_time
+    global keyboard_overlay_channel, keyboard_overlay_start_time
 
     with state_lock:
         current_midi_channel = ch
         if status == 0xC0:
             current_program_change = n1
 
+    # --- Note On / Off handling ---
     if status == 0x90:
-        fs.noteon(ch, n1, n2) if n2 > 0 else fs.noteoff(ch, n1)
+        if n2 > 0:
+            fs.noteon(ch, n1, n2)
+            # Show overlay only on first note press per channel
+            if ch == 9:  # drum
+                if not drum_overlay_shown:
+                    drum_overlay_shown = True
+                    drum_overlay_start_time = time.time()
+            else:
+                if keyboard_overlay_channel != ch:
+                    keyboard_overlay_channel = ch
+                    keyboard_overlay_start_time = time.time()
+        else:
+            fs.noteoff(ch, n1)
     elif status == 0x80:
         fs.noteoff(ch, n1)
     elif status == 0xB0:
@@ -252,6 +273,8 @@ def scan_midifiles():
 # ---------------------- DISPLAY UPDATE ----------------------
 def update_display():
     global _last_display_time, draw, img
+    global drum_overlay_shown, drum_overlay_start_time
+    global keyboard_overlay_channel, keyboard_overlay_start_time
 
     if draw is None or img is None:
         return
@@ -263,7 +286,6 @@ def update_display():
 
     draw.rectangle((0, 0, WIDTH, HEIGHT), fill=(0, 0, 0))
 
-    # --- If shutting down, show only message ---
     if shutting_down:
         draw.text((10, HEIGHT//2 - 10), MESSAGE, font=font, fill=(0, 255, 0))
         try:
@@ -272,7 +294,7 @@ def update_display():
             print("disp.display failed:", e)
         return
 
-    # --- Determine which menu to draw ---
+    # --- Draw menu ---
     if operation_mode == "main screen":
         start_index = 0
         end_index = len(files)
@@ -288,22 +310,36 @@ def update_display():
         else:
             draw.text((10, y), line, font=font, fill=(255, 255, 255))
 
-    # Top message
     draw.text((10, 0), MESSAGE, font=font, fill=(255, 0, 0))
-
-    # MIDI channel/preset overlay
     overlay_y = HEIGHT - 30
-    with state_lock:
-        ch = current_midi_channel
-        prog = current_program_change
-    if ch is not None:
-        disp_ch = get_display_channel(ch) if ch in range(16) else ch
-        preset_name = channel_presets.get(ch)
-        text = f"CH {disp_ch} : {preset_name}" if preset_name else f"CH {disp_ch} : Prog {prog}" if prog is not None else f"CH {disp_ch} : Unknown"
-        draw.rectangle((0, overlay_y, WIDTH, HEIGHT), fill=(0, 0, 0))
-        draw.text((10, overlay_y + 4), text, font=font, fill=(0, 255, 0))
 
-    # MIDI connection status only for main screen and MIDI KEYBOARD
+    # --- DRUM OVERLAY WITH SMOOTH FADE ---
+    if drum_overlay_shown:
+        elapsed = now - drum_overlay_start_time
+        if elapsed < 4.0:
+            alpha = int(255 * (1 - elapsed / 4.0))
+            disp_ch = get_display_channel(9)
+            preset_name = channel_presets.get(9, "Drums")
+            color = (0, alpha, 0)
+            draw.rectangle((0, overlay_y, WIDTH, HEIGHT), fill=(0, 0, 0))
+            draw.text((10, overlay_y + 4), f"CH {disp_ch} : {preset_name}", font=font, fill=color)
+        else:
+            drum_overlay_shown = False
+
+    # --- KEYBOARD OVERLAY WITH SMOOTH FADE ---
+    if keyboard_overlay_channel is not None:
+        elapsed = now - keyboard_overlay_start_time
+        if elapsed < 4.0:
+            alpha = int(255 * (1 - elapsed / 4.0))
+            disp_ch = get_display_channel(keyboard_overlay_channel)
+            preset_name = channel_presets.get(keyboard_overlay_channel, f"Prog {current_program_change}")
+            color = (0, alpha, 0)
+            draw.rectangle((0, overlay_y, WIDTH, HEIGHT), fill=(0, 0, 0))
+            draw.text((10, overlay_y + 4), f"CH {disp_ch} : {preset_name}", font=font, fill=color)
+        else:
+            keyboard_overlay_channel = None
+
+    # --- MIDI connection status ---
     if 'midi_manager' in globals() and midi_manager is not None:
         if operation_mode in ["main screen", "MIDI KEYBOARD"]:
             status_text = f"MIDI: {midi_manager.port_name}" if midi_manager.port_name else "MIDI: Connecting..."
@@ -333,7 +369,8 @@ def handle_back():
     update_display()
 
 def handle_select():
-    global operation_mode, files, pathes, selectedindex, MESSAGE, sfid, loaded_sf2_path, fs, shutting_down
+    global operation_mode, files, pathes, selectedindex, MESSAGE
+    global sfid, loaded_sf2_path, fs, shutting_down
 
     sel = files[selectedindex]
     MESSAGE = ""
@@ -359,17 +396,11 @@ def handle_select():
                 MESSAGE = "No MIDI ports"
         elif sel == "SHUTDOWN":
             shutting_down = True
-
-# Show "Shutting down..." for 4 seconds
             MESSAGE = "Shutting down..."
             update_display()
             time.sleep(4)
-
-  
-    # Power off
             os.system("sudo /bin/systemctl poweroff")
             return
-
         selectedindex = 0
     else:
         if operation_mode == "SOUND FONT" and files:
@@ -415,7 +446,7 @@ def background_init():
 def main():
     threading.Thread(target=background_init, daemon=True).start()
     while True:
-        time.sleep(0.2)
+        time.sleep(0.05)  # faster updates for smoother fade
         update_display()
 
 if __name__ == '__main__':
