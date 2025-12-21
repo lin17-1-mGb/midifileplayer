@@ -8,7 +8,7 @@ fyi no real difference in speed in bootup compared to original but does not use 
 
 **show_safe_unplug_bkp.py** shutsdown as a systemd service  
 
-Note you need to know how to create and enable systemd services  
+Note you need to know how to create and enable systemd services  - update - added the 3 systemd service ini
 
 Video showing new features - https://www.youtube.com/shorts/SZ9eBFSrU1o
 
