@@ -1,0 +1,12 @@
+[Unit]
+Description=Display Safe to Unplug Message
+DefaultDependencies=no
+Before=shutdown.target poweroff.target reboot.target halt.target
+WantedBy=poweroff.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /home/pi/midifileplayer/show_safe_unplug.py
+
+[Install]
+WantedBy=halt.target poweroff.target

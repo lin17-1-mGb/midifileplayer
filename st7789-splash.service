@@ -1,0 +1,13 @@
+[Unit]
+Description=ST7789 early splash
+DefaultDependencies=no
+After=sysinit.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /home/pi/midifileplayer/st7789_splash.py
+User=pi
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

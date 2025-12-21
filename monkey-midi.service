@@ -1,0 +1,17 @@
+[Unit]
+Description=Monkey MIDI Player
+After=st7789-splash.service sound.target bluetooth.target
+Wants=sound.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi
+ExecStart=/usr/bin/python3 -B /home/pi/midifileplayer/fast_boot_monkey_midi.py
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONDONTWRITEBYTECODE=1
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
