@@ -10,6 +10,20 @@ BACKLIGHT_PIN = 13
 backlight = LED(BACKLIGHT_PIN)
 backlight.on()
 
+def make_frame(brightness):
+    img = Image.new("RGB", (WIDTH, HEIGHT), (0, 0, 0))
+    draw = ImageDraw.Draw(img)
+    bbox = draw.textbbox((0, 0), TEXT, font=font)
+    w, h = bbox[2] - bbox[0], bbox[3] - bbox[1]
+    draw.text(
+        ((WIDTH - w) // 2, (HEIGHT - h) // 2),
+        TEXT,
+        font=font,
+        fill=(0, brightness, 0),
+    )
+    return img
+
+# --- display init ---
 disp = st7789.ST7789(
     width=240,
     height=240,
@@ -21,7 +35,12 @@ disp = st7789.ST7789(
     spi_speed_hz=80_000_000,
 )
 
-disp.begin()
+try:
+    disp.begin()
+except Exception:
+    # SPI already gone — nothing we can do
+    while True:
+        time.sleep(1)
 
 try:
     font = ImageFont.truetype(
@@ -30,36 +49,42 @@ try:
 except:
     font = ImageFont.load_default()
 
-text = "Safe to unplug"
+TEXT = "Safe to unplug"
 
-# --- visible fade using redraw ---
-steps = 20
-for i in range(steps, -1, -1):
-    brightness = int(255 * (i / steps))
-    img = Image.new("RGB", (WIDTH, HEIGHT), (0, 0, 0))
-    draw = ImageDraw.Draw(img)
+# --- guaranteed first frame ---
+frame = make_frame(255)
+shown = False
 
-    bbox = draw.textbbox((0, 0), text, font=font)
-    w, h = bbox[2] - bbox[0], bbox[3] - bbox[1]
+for _ in range(3):  # retry window (~150ms)
+    try:
+        disp.display(frame)
+        shown = True
+        break
+    except:
+        time.sleep(0.05)
 
-    draw.text(
-        ((WIDTH - w) // 2, (HEIGHT - h) // 2),
-        text,
-        font=font,
-        fill=(0, brightness, 0),
-    )
+if not shown:
+    # display unreachable — freeze silently
+    while True:
+        time.sleep(1)
 
-    disp.display(img)
-    time.sleep(0.04)
+# --- optional fade (only if SPI still alive) ---
+steps = 18
+for i in range(steps - 1, -1, -1):
+    try:
+        disp.display(make_frame(int(255 * i / steps)))
+        time.sleep(0.04)
+    except:
+        break  # SPI died mid-fade → keep last frame
 
-# --- freeze last frame ---
+# --- freeze cleanly ---
 try:
     disp._spi.close()
 except:
     pass
 
-# optional: backlight fully off after fade
 backlight.off()
 
 while True:
     time.sleep(1)
+
