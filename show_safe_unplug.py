@@ -7,7 +7,6 @@ from gpiozero import LED
 WIDTH = HEIGHT = 240
 BACKLIGHT_PIN = 13
 
-# Backlight (digital, reliable)
 backlight = LED(BACKLIGHT_PIN)
 backlight.on()
 
@@ -24,9 +23,6 @@ disp = st7789.ST7789(
 
 disp.begin()
 
-img = Image.new("RGB", (WIDTH, HEIGHT), (0, 0, 0))
-draw = ImageDraw.Draw(img)
-
 try:
     font = ImageFont.truetype(
         "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 22
@@ -35,24 +31,35 @@ except:
     font = ImageFont.load_default()
 
 text = "Safe to unplug"
-bbox = draw.textbbox((0, 0), text, font=font)
-w, h = bbox[2] - bbox[0], bbox[3] - bbox[1]
 
-draw.text(
-    ((WIDTH - w) // 2, (HEIGHT - h) // 2),
-    text,
-    font=font,
-    fill=(0, 255, 0),
-)
+# --- visible fade using redraw ---
+steps = 20
+for i in range(steps, -1, -1):
+    brightness = int(255 * (i / steps))
+    img = Image.new("RGB", (WIDTH, HEIGHT), (0, 0, 0))
+    draw = ImageDraw.Draw(img)
 
-disp.display(img)
+    bbox = draw.textbbox((0, 0), text, font=font)
+    w, h = bbox[2] - bbox[0], bbox[3] - bbox[1]
 
-# Let user read it
-time.sleep(3)
+    draw.text(
+        ((WIDTH - w) // 2, (HEIGHT - h) // 2),
+        text,
+        font=font,
+        fill=(0, brightness, 0),
+    )
 
-# Clean backlight off
+    disp.display(img)
+    time.sleep(0.04)
+
+# --- freeze last frame ---
+try:
+    disp._spi.close()
+except:
+    pass
+
+# optional: backlight fully off after fade
 backlight.off()
 
-# Freeze forever
 while True:
     time.sleep(1)
