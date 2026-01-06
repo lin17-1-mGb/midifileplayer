@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 # Monkey MIDI Player - FINAL OPTIMIZED VERSION
-# Features: Mixer, Metronome Settings, Recording, Lean Mode (Yellow + WiFi/HDMI Off)
 
 import sys, os, time, threading, smbus, datetime
 import mido 
@@ -44,6 +43,7 @@ recorder = MidiRecorder()
 metronome_on = False
 bpm = 120
 metro_vol = 80 
+metro_adjusting = False
 
 def metronome_worker():
     while True:
@@ -77,7 +77,7 @@ class UPS_C:
         except: return 0.0
     def get_time_left(self):
         v = self.get_voltage(); p = max(0, min(1, (v - 3.4) / (4.15 - 3.4)))
-        total_minutes = p * (280 if LOW_POWER_MODE else 210) # Extended estimate for WiFi-off
+        total_minutes = p * (280 if LOW_POWER_MODE else 210)
         return f"{int(total_minutes // 60)}:{int(total_minutes % 60):02d}"
     def get_percentage_raw(self):
         v = self.get_voltage(); p = (v - 3.4) / (4.15 - 3.4) * 100
@@ -240,7 +240,7 @@ def scan_midifiles():
     midi_paths, midi_names = p, l
 
 def handle_up():
-    global selectedindex, volume_level, rename_char_idx, channel_volumes, mixer_selected_ch, bpm, metro_vol
+    global selectedindex, volume_level, rename_char_idx, channel_volumes, mixer_selected_ch, bpm, metro_vol, metro_adjusting
     if operation_mode == "VOLUME":
         volume_level = min(1.0, volume_level + 0.05)
         if fs: fs.setting('synth.gain', volume_level)
@@ -253,13 +253,15 @@ def handle_up():
             if fs: fs.cc(f_ch, 7, channel_volumes[f_ch])
         else: mixer_selected_ch = max(0, mixer_selected_ch - 1)
     elif operation_mode == "METRONOME":
-        if selectedindex == 1: bpm = min(240, bpm + 5)
-        elif selectedindex == 2: metro_vol = min(127, metro_vol + 5)
-        else: selectedindex = max(0, selectedindex - 1)
+        if metro_adjusting:
+            if selectedindex == 1: bpm = min(240, bpm + 5)
+            elif selectedindex == 2: metro_vol = min(127, metro_vol + 5)
+        else:
+            selectedindex = max(0, selectedindex - 1)
     else: selectedindex = max(0, selectedindex - 1)
 
 def handle_down():
-    global selectedindex, volume_level, rename_char_idx, channel_volumes, mixer_selected_ch, bpm, metro_vol
+    global selectedindex, volume_level, rename_char_idx, channel_volumes, mixer_selected_ch, bpm, metro_vol, metro_adjusting
     if operation_mode == "VOLUME":
         volume_level = max(0.0, volume_level - 0.05)
         if fs: fs.setting('synth.gain', volume_level)
@@ -272,18 +274,24 @@ def handle_down():
             if fs: fs.cc(f_ch, 7, channel_volumes[f_ch])
         else: mixer_selected_ch = min(9, mixer_selected_ch + 1)
     elif operation_mode == "METRONOME":
-        if selectedindex == 1: bpm = max(40, bpm - 5)
-        elif selectedindex == 2: metro_vol = max(0, metro_vol - 5)
-        else: selectedindex = min(2, selectedindex + 1)
+        if metro_adjusting:
+            if selectedindex == 1: bpm = max(40, bpm - 5)
+            elif selectedindex == 2: metro_vol = max(0, metro_vol - 5)
+        else:
+            selectedindex = min(2, selectedindex + 1)
     else: selectedindex = min(len(files) - 1, selectedindex + 1)
 
 def handle_back():
-    global operation_mode, files, pathes, selectedindex, rename_string, mixer_adjusting
+    global operation_mode, files, pathes, selectedindex, rename_string, mixer_adjusting, metro_adjusting
     if operation_mode == "MIXER" and mixer_adjusting: mixer_adjusting = False; return
+    if operation_mode == "METRONOME" and metro_adjusting: metro_adjusting = False; return
+    
     if operation_mode == "RENAME":
         if len(rename_string) > 0: rename_string = rename_string[:-1]
         else: operation_mode = "FILE ACTION"; files = ["PLAY", "STOP", "RENAME", "DELETE", "BACK"]
-    elif operation_mode in ["FILE ACTION", "MIXER", "METRONOME", "VOLUME"]:
+    elif operation_mode == "FILE ACTION":
+        operation_mode = "MIDI FILE"; scan_midifiles(); files, pathes = midi_names.copy(), midi_paths.copy()
+    elif operation_mode in ["MIXER", "METRONOME", "VOLUME", "MIDI FILE", "SOUND FONT", "MIDI KEYBOARD"]:
         operation_mode = "main screen"; files = MAIN_MENU.copy()
     else:
         operation_mode = "main screen"; files = MAIN_MENU.copy()
@@ -291,11 +299,15 @@ def handle_back():
 
 def handle_select():
     global operation_mode, files, pathes, selectedindex, MESSAGE, msg_start_time, fs, sfid
-    global rename_string, rename_char_idx, mixer_adjusting, metronome_on, selected_file_path, loaded_sf2_path
+    global rename_string, rename_char_idx, mixer_adjusting, metronome_on, selected_file_path, loaded_sf2_path, metro_adjusting
+    
     if operation_mode == "MIXER": mixer_adjusting = not mixer_adjusting; return
+    
     if operation_mode == "METRONOME":
         if selectedindex == 0: metronome_on = not metronome_on
+        else: metro_adjusting = not metro_adjusting
         return
+        
     if not files and operation_mode != "RENAME": return
     if operation_mode != "RENAME": sel = files[selectedindex]
     if operation_mode == "main screen":
@@ -370,7 +382,6 @@ def update_display():
     if now - _last_display_time < (0.15 if LOW_POWER_MODE else 0.06): return
     _last_display_time = now
 
-    # POWER MODE COLORS
     accent = (255, 255, 0) if LOW_POWER_MODE else (255, 255, 255)
     header_fill = (60, 60, 0) if LOW_POWER_MODE else (30, 30, 30)
     title_fill = (90, 90, 0) if LOW_POWER_MODE else (50, 50, 50)
@@ -403,7 +414,10 @@ def update_display():
         for i, opt in enumerate(opts):
             y = 80 + (i * 40)
             color = accent if i == selectedindex else (200, 200, 200)
-            if i == selectedindex: draw.rectangle([10, y-5, WIDTH-10, y+25], outline=color, width=2)
+            # If adjusting a value, show a green box (like mixer)
+            if i == selectedindex:
+                box_color = (0, 255, 0) if metro_adjusting else color
+                draw.rectangle([10, y-5, WIDTH-10, y+25], outline=box_color, width=2)
             draw.text((20, y), opt, font=font, fill=color)
         if metronome_on:
             draw.ellipse((200, 35, 215, 50), fill=(0, 255, 0) if (time.time() % (60/bpm) < 0.1) else (50, 0, 0))
@@ -438,10 +452,8 @@ def update_display():
 
 def background_init():
     try:
-         # 1. WAKE UP HARDWARE
         os.system("sudo rfkill unblock wifi")
         os.system("sudo tvservice -p > /dev/null 2>&1")
-
         lazy_imports(); init_buttons(); init_display()
         threading.Thread(target=scan_soundfonts, daemon=True).start()
         threading.Thread(target=scan_midifiles, daemon=True).start()
