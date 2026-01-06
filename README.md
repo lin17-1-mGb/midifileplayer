@@ -1,4 +1,4 @@
-#Waveshare UPS hat (C)
+# Waveshare UPS hat (C)
 Script if you use Waveshare UPS Hat (C) to power Rapberry Pi, Lean power mode plus added features: Mixer; Midi file Play/Stop/Rename/Delete; Record midi; Metronome; System volume
 
 
