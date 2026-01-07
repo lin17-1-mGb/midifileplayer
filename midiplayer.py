@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-import sys, git, threading, time, os, fluidsynth, st7789, rtmidi, subprocess, select
+import sys, git, threading, time, os, fluidsynth, st7789, rtmidi, subprocess, select, mido
 from gpiozero import Button, DigitalOutputDevice
 from PIL import Image, ImageDraw, ImageFont
 
@@ -21,8 +21,8 @@ fs = fluidsynth.Synth()
 fs.start(driver="alsa")
 sfid = fs.sfload(soundfontname,True)
 
-pathes = ["MIDI KEYBOARD", "SOUND FONT", "MIDI FILE", "BLUETOOTH"]
-files = ["MIDI KEYBOARD", "SOUND FONT", "MIDI FILE", "BLUETOOTH"]
+pathes = ["MIDI INPUT", "MIDI OUTPUT", "SOUND FONT", "MIDI FILE", "BLUETOOTH"]
+files = ["MIDI INPUT", "MIDI OUTPUT", "SOUND FONT", "MIDI FILE", "BLUETOOTH"]
 selectedindex = 0
 use_bluetooth = 0
 
@@ -30,7 +30,10 @@ repo_path = os.path.dirname(os.path.abspath(__file__))
 display_type = "square"
 
 midiin = rtmidi.MidiIn()
+midiout = rtmidi.MidiOut()
+midioutname="FLUIDSYNTH"
 input_ports = midiin.get_ports()
+output_ports = midiout.get_ports()
 for i, port in enumerate(input_ports):
     print(f"{i}: {port}")
 midi_input_index = len(input_ports) - 1
@@ -259,8 +262,8 @@ def connect_ble_device(mac):
 def resetsynth():
     global selectedindex, files, pathes, fs, operation_mode, previous_operation_mode, soundfontname
     operation_mode = "main screen"
-    pathes = ["MIDI KEYBOARD", "SOUND FONT", "MIDI FILE", "BLUETOOTH"]
-    files = ["MIDI KEYBOARD", "SOUND FONT", "MIDI FILE", "BLUETOOTH"]
+    pathes = ["MIDI INPUT", "MIDI OUTPUT", "SOUND FONT", "MIDI FILE", "BLUETOOTH"]
+    files = ["MIDI INPUT", "MIDI OUTPUT", "SOUND FONT", "MIDI FILE", "BLUETOOTH"]
     selectedindex = 0
     fs.delete()
     fs = fluidsynth.Synth()
@@ -316,7 +319,7 @@ def index_of_substring(lst, substring):
     return -1  # return -1 if not found, like JS indexOf
 
 def handle_button(bt):
-    global selectedindex, files, pathes, fs, operation_mode, previous_operation_mode, soundfontname, draw, disp, use_bluetooth
+    global midioutname, selectedindex, files, pathes, fs, operation_mode, previous_operation_mode, soundfontname, draw, disp, use_bluetooth
     if str(bt.pin) == "GPIO16":
         selectedindex -= 1
     if str(bt.pin) == "GPIO24":
@@ -326,8 +329,8 @@ def handle_button(bt):
         resetsynth()
     if str(bt.pin) == "GPIO5":
         if operation_mode == "main screen":
-            pathes = ["MIDI KEYBOARD", "SOUND FONT", "MIDI FILE", "BLUETOOTH"]
-            files = ["MIDI KEYBOARD", "SOUND FONT", "MIDI FILE", "BLUETOOTH"]
+            pathes = ["MIDI INPUT", "MIDI OUTPUT", "SOUND FONT", "MIDI FILE", "BLUETOOTH"]
+            files = ["MIDI INPUT", "MIDI OUTPUT", "SOUND FONT", "MIDI FILE", "BLUETOOTH"]
             operation_mode = pathes[selectedindex]
         if operation_mode == "BLUETOOTH":
             if previous_operation_mode == operation_mode:
@@ -338,7 +341,43 @@ def handle_button(bt):
                 pathes=["OFF","ON"]
                 files=["OFF","ON"]
             previous_operation_mode = operation_mode
-        if operation_mode == "MIDI KEYBOARD":
+        if operation_mode=="MIDI OUTPUT":
+            midiout = rtmidi.MidiOut()
+            if previous_operation_mode == operation_mode:
+                midiout = rtmidi.MidiOut()
+                # If the selected output port name changed (e.g., BLE reconnect)
+                if files[selectedindex] != pathes[selectedindex]:
+                    draw.rectangle([10, 10 + (2 * 30), 230, 40 + (2 * 30)], fill=(235, 235, 235))
+                    draw.text((10, 10 + (2 * 30)), "Please Wait", font=font, fill=(255, 0, 0))
+                    disp.display(img)
+                    remove_all_devices()
+                    connect_ble_device(pathes[selectedindex])
+                    wait_for_midi_port(files[selectedindex])
+                    # Recalculate index based on actual available output ports
+                    selectedindex = index_of_substring(midiout.get_ports(), files[selectedindex])
+                # Close previously opened port
+                if midiout.is_port_open():
+                    midiout.close_port()
+                # Open the selected output port
+                midiout.open_port(selectedindex)
+                midioutname=files[selectedindex]
+            else:
+                pathes = ["FLUIDSYNTH"]
+                files = ["FLUIDSYNTH"]
+                input_ports = midiout.get_ports()
+                for port in input_ports:
+                    pathes.append(port)
+                    files.append(port)
+                # scan for new BT devices only once
+                draw.rectangle([10, 10 + (2 * 30), 230, 40 + (2 * 30)], fill=(235, 235, 235))
+                draw.text((10, 10 + (2 * 30)), "Please Wait", font=font, fill=(255, 0, 0))
+                disp.display(img)
+                remove_all_devices()
+                for mac,name in get_online_devices(7):
+                    pathes.append(name)
+                    files.append(mac)
+            previous_operation_mode = operation_mode
+        if operation_mode == "MIDI INPUT":
             midiin = rtmidi.MidiIn()
             if previous_operation_mode == operation_mode:
                 if(files[selectedindex]!=pathes[selectedindex]):
@@ -399,14 +438,45 @@ def handle_button(bt):
                         pathes.append(dirpath + "/" + filename)
                         files.append(filename.replace(".mid", "").replace("_", " "))
             if previous_operation_mode == operation_mode:
-                operation_mode = "main screen"
-                fs.delete()
-                fs = fluidsynth.Synth()
-                fs.start(driver="alsa")
-                sfid = fs.sfload(soundfontname,True)
-                fs.play_midi_file(pathes[selectedindex])
+                if midioutname == "FLUIDSYNTH":
+                    operation_mode = "main screen"
+                    fs.delete()
+                    fs = fluidsynth.Synth()
+                    fs.start(driver="alsa")
+                    sfid = fs.sfload(soundfontname, True)
+                    fs.play_midi_file(pathes[selectedindex])
+                else:
+                    operation_mode = "main screen"
+                    midifilems = pathes[selectedindex]      # MIDI file path
+                    portnamems = midioutname               # Full RtMidi port name
+                    # --- MIDO PLAYBACK REPLACEMENT ---
+                    # Find the matching MIDO output port
+                    outport_name = None
+                    for name in mido.get_output_names():
+                        if portnamems in name or name in portnamems:
+                            outport_name = name
+                            break
+                    if outport_name is None:
+                        print("ERROR: Could not find matching MIDO output port!")
+                    else:
+                        # Open the output port
+                        outport = mido.open_output(outport_name)
+                        # Load the MIDI file
+                        mid = mido.MidiFile(midifilems)
+                        # Playback loop
+                        start_time = time.time()
+                        for msg in mid:
+                            time.sleep(msg.time)   # msg.time is delta-time in seconds
+                            if not msg.is_meta:
+                                outport.send(msg)
+                        outport.close()
+                    # --- END MIDO PLAYBACK ---
             previous_operation_mode = operation_mode
     update_display()
+
+def midish_send(cmd,p):
+    p.stdin.write(cmd + "\n")
+    p.stdin.flush()
 
 def update_display():
     draw.rectangle((0, 0, disp.width, disp.height), (0, 0, 0))
