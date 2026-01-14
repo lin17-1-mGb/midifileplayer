@@ -150,8 +150,11 @@ def lazy_imports():
 def init_buttons():
     global button_up, button_down, button_select, button_back
     from gpiozero import Button
-    button_up, button_down = Button(16), Button(24)
-    button_select, button_back = Button(5), Button(6)
+    # Adding pull_up=True is essential for Pirate Audio buttons
+    button_up = Button(16, pull_up=True)
+    button_down = Button(24, pull_up=True)
+    button_select = Button(5, pull_up=True)
+    button_back = Button(6, pull_up=True)
 
 def init_display():
     global disp, img, draw, font, font_tiny
@@ -505,3 +508,4 @@ if __name__ == '__main__':
         main()
     except KeyboardInterrupt:
         print("Shutting down...")
+
