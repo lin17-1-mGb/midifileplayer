@@ -493,4 +493,15 @@ def main():
         time.sleep(0.05)
 
 if __name__ == '__main__':
-    main()
+    # 1. Force Wi-Fi hardware ON at startup
+    import os
+    os.system("sudo rfkill unblock wifi")
+    
+    # 2. Initialize your settings
+    load_mixer()
+    
+    # 3. Start the main program
+    try:
+        main()
+    except KeyboardInterrupt:
+        print("Shutting down...")
